@@ -1,46 +1,34 @@
-const validator = require('validator')
-const HTTPError = require('../error')
+import validator from 'validator'
+import HTTPError from '../error/http_error.js'
 
-class Lists {
-  static instance
+export default class Lists {
+  static _instance
 
   constructor(listsModel) {
     this.listsModel = listsModel
   }
 
   static getInstance(listsModel) {
-    if (!Lists.instance) {
-      Lists.instance = new Lists(listsModel)
+    if (!Lists._instance) {
+      Lists._instance = new Lists(listsModel)
     }
-
-    return Lists.instance
+    return Lists._instance
   }
 
-  async createOne({ title, title_color }, userID) {
-    if (!validator.isLength(title, { min: 3, max: 100 })) {
-      throw new HTTPError('invalid title', 422)
-    }
-
-    if (typeof title_color === 'string' && !validator.isHexColor(title_color)) {
-      throw new HTTPError('invalid title_color', 422)
-    }
-
-    return await this.listsModel.createOneByUserID(title, title_color, userID)
+  async create(dto) {
+    return this.listsModel.createOneList(dto)
   }
 
-  async getMany(userID, limit = 50, offset = 0) {
-    if (!validator.isInt(limit)) {
-      throw new HTTPError('invalid limit', 422)
-    }
-
-    if (!validator.isInt(limit)) {
-      throw new HTTPError('invalid offset', 422)
-    }
-
-    const lists = await this.listsModel.getManyByUserID(userID, limit, offset)
-
-    return lists
+  async list({ limit, offset, user_id, sort, order }) {
+    return this.listsModel.getManyLists({
+      user_id: {
+        eq: user_id
+      },
+      limit,
+      offset,
+      sort: sort && order && {
+        [sort]: order
+      }
+    })
   }
 }
-
-module.exports = Lists

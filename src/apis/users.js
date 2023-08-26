@@ -1,50 +1,51 @@
-const { Router } = require('express')
+import { Router } from 'express'
 
-class Users {
-  static instance
+export default class Users {
+  static _instance
 
-  constructor(usersController) {
+  constructor(usersController, usersValidation, usersTransformation) {
     this.usersController = usersController
+    this.usersValidation = usersValidation
+    this.usersTransformation = usersTransformation
     this.router = Router()
   }
 
-  static getInstance(usersController) {
-    if (!Users.instance) {
-      Users.instance = new Users(usersController)
+  static getInstance(usersController, usersValidation, usersTransformation) {
+    if (!Users._instance) {
+      Users._instance = new Users(usersController, usersValidation, usersTransformation)
     }
 
-    return Users.instance
+    return Users._instance
   }
 
   serve() {
     this.router.post('/signup', async (req, res) => {
       try {
-        const { first_name,
-          last_name,
-          email,
-          status,
-          created_at,
-          updated_at
-        } = await this.usersController.signup(req.body.data)
+        const data = {
+          host: req.headers.origin,
+          ...req.body.data
+        }
+
+        const dto = this.usersTransformation.transformSignup(data)
+
+        this.usersValidation.validateSignup(dto)
+        await this.usersValidation.canUserCreate(dto.username, dto.email)
+
+        const user = await this.usersController.signup(dto)
 
         return res
           .status(201)
           .json({
-            message: 'success',
-            data: {
-              first_name,
-              last_name,
-              email,
-              status,
-              created_at,
-              updated_at
-            }
+            message: 'Success',
+            errors: null,
+            data: user
           })
-      } catch (e) {
+      } catch ({ message, errors, code = 500 }) {
         res
-          .status(e.code || 500)
+          .status(code)
           .json({
-            message: e.message,
+            message,
+            errors,
             data: null
           })
       }
@@ -52,19 +53,52 @@ class Users {
 
     this.router.post('/signin', async (req, res) => {
       try {
-        const user = await this.usersController.signin(req.body.data)
+        const dto = this.usersTransformation.transformSignin(req.body.data)
+
+        this.usersValidation.validateSignin(dto)
+
+        const user = await this.usersController.signin(dto)
 
         return res
-          .status(200)
           .json({
-            message: 'success',
+            message: user?.token?.otp ? 'User is not activated' : 'Success',
+            errors: null,
             data: user
           })
-      } catch (e) {
-        return res
-          .status(e.code || 500)
+      } catch ({ message, errors, code = 500 }) {
+        res
+          .status(code)
           .json({
-            message: e.message,
+            message,
+            errors,
+            data: null
+          })
+      }
+    })
+
+    this.router.post('/:id/verifications', async (req, res) => {
+      try {
+        const dto = {
+          id: +req.params.id,
+          otp: req.body.data.otp
+        }
+
+        this.usersValidation.validateVerification(dto)
+
+        const user = await this.usersController.verify(dto)
+
+        return res
+          .json({
+            message: 'Success',
+            errors: null,
+            data: user
+          })
+      } catch ({ message, errors, code = 500 }) {
+        res
+          .status(code)
+          .json({
+            message,
+            errors,
             data: null
           })
       }
@@ -73,5 +107,3 @@ class Users {
     return this.router
   }
 }
-
-module.exports = Users

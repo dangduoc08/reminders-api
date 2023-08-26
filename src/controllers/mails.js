@@ -1,34 +1,51 @@
-const nodemailer = require('nodemailer');
+import fs from 'fs/promises'
+import path from 'path'
+import nodemailer from 'nodemailer'
 
-class Mails {
-  static instance
+export default class Mails {
+  static _instance
 
   transporter = nodemailer.createTransport({
-    service: 'smtp.gmail.com',
+    host: 'smtp.gmail.com',
+    port: 587,
     auth: {
-      user: 'duocdevtest',
-      pass: process.env.GMAIL_PASSWORD
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASSWORD
     }
   })
 
-  static getInstance() {
-    if (!Mails.instance) {
-      Mails.instance = new Mails()
+  constructor(logger) {
+    this.logger = logger
+  }
+
+  static getInstance(logger) {
+    if (!Mails._instance) {
+      Mails._instance = new Mails(logger)
     }
-
-
-    return Mails.instance
+    return Mails._instance
   }
 
-  async send(subject, to, content) {
-    this.transporter.sendMail({
-      from: process.env.GMAIL_USER,
-      to: to,
-      subject: subject,
-      text: content
-    })
-  }
+  async sendOTP(subject, to, fullname, otp) {
+    try {
+      const template = (await fs.readFile(path.join(
+        process.cwd(),
+        'assets',
+        'otp.html'
+      )))
+        .toString()
 
+      await this.transporter.sendMail({
+        from: process.env.SMTP_USER,
+        to: to,
+        subject: subject,
+        html: template
+          .replace('{{fullname}}', fullname)
+          .replace('{{otp}}', otp)
+      })
+      return
+    } catch (err) {
+      this.logger.error(err)
+      return
+    }
+  }
 }
-
-module.exports = Mails

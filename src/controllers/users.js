@@ -1,171 +1,172 @@
-const bcrypt = require('bcrypt')
-const jwt = require('jsonwebtoken')
-const validator = require('validator')
-const HTTPError = require('../error')
+import bcrypt from 'bcrypt'
+import jwt from 'jsonwebtoken'
+import HTTPError from '../error/http_error.js'
+import {
+  USER_STATUSES
+} from '../constants/index.js'
 
-class Users {
+export default class Users {
   static _instance
 
-  constructor(usersModel, mailsController) {
+  constructor(
+    usersModel,
+    mailsController,
+    nodeCache
+  ) {
     this.usersModel = usersModel
     this.mailsController = mailsController
+    this.nodeCache = nodeCache
   }
 
-  static getInstance(usersModel, mailsController) {
+  static getInstance(
+    usersModel,
+    mailsController,
+    nodeCache
+  ) {
     if (!Users._instance) {
-      Users._instance = new Users(usersModel, mailsController)
+      Users._instance = new Users(
+        usersModel,
+        mailsController,
+        nodeCache
+      )
     }
-
     return Users._instance
   }
 
-  async canUserCreate(username, email) {
-    try {
-      const user = await this.usersModel.getOneByUsernameOrEmail(username, email)
+  generateOTP(username) {
+    const min = 100000
+    const max = 999999
+    const otp = Math.floor(Math.random() * (max - min + 1)) + min
 
-      if (!user) {
-        return true
-      }
-
-      return false
-    } catch (_) {
-      return false
-    }
+    this.nodeCache.set(username, otp, 120)
+    return otp
   }
 
-  validateSignup(input) {
-    const {
-      first_name,
-      last_name,
-      email,
-      username,
-      password,
-      dob
-    } = input
-
-    if (
-      !validator.isLength(first_name, { min: 1, max: 50 }) ||
-      !validator.isAlpha(first_name)
-    ) {
-      throw new HTTPError('invalid first_name', 422)
-    }
-
-    if (
-      !validator.isLength(last_name, { min: 2, max: 50 }) ||
-      !validator.isAlpha(last_name)
-    ) {
-      throw new HTTPError('invalid last_name', 422)
-    }
-
-    if (!validator.isEmail(email)) {
-      throw new HTTPError('invalid email', 422)
-    }
-
-    if (
-      !validator.isLength(username, { min: 10, max: 50 }) ||
-      username.trim().match(/ /gi)?.length > 0
-    ) {
-      throw new HTTPError('invalid username', 422)
-    }
-
-    if (!validator.isStrongPassword(password)) {
-      throw new HTTPError('invalid password', 422)
-    }
-
-    if (!validator.isDate(new Date(dob))) {
-      throw new HTTPError('invalid dob', 422)
-    }
+  removeSensitive(user) {
+    delete user.hash
+    delete user.email
+    delete user.username
   }
 
-  validateSignin(input) {
+  async signup(dto) {
     const {
-      username,
       password
-    } = input
-
-    if (!validator.isLength(username, { min: 10, max: 50 })) {
-      throw new HTTPError('unmatched username', 401)
-    }
-
-    if (!validator.isStrongPassword(password)) {
-      throw new HTTPError('unmatched password', 401)
-    }
-  }
-
-  /**
-   * 
-   * @param {*} input 
-   * @returns user record
-   */
-  async signup(input) {
-    const {
-      email,
-      username,
-      password
-    } = input
-    // await this.mailsController.send('Verify account', email, 'click to link')
-
-    /**
-     * @description validation input data from client request
-     */
-    await this.validateSignup(input)
-
-    /**
-    * @description check whether username or email duplicated
-    */
-    // const ok = await this.canUserCreate(username, email)
-    // if (!ok) {
-    //   throw new HTTPError('username or email have created', 409)
-    // }
-
-    // FIXME: - Information Disclosure
-    const emailOk = await this.usersModel.getOneByEmail(email)
-    if (emailOk) {
-      throw new HTTPError('email have used', 409)
-    }
-
-    const usernameOk = await this.usersModel.getOneByUsername({ username })
-    if (usernameOk) {
-      throw new HTTPError('username have used', 409)
-    }
+    } = dto
 
     const hash = bcrypt.hashSync(password, 10)
-    const user = await this.usersModel.createOne({ ...input, hash })
+
+    const user = await this.usersModel.createOneUser({ ...dto, hash })
+
+    if (user) {
+      const otp = this.generateOTP(user.username)
+      this.mailsController.sendOTP(
+        'Reminders: Confirm your account.',
+        user.email,
+        `${user.first_name} ${user.last_name}`,
+        otp
+      )
+    }
+
+    this.removeSensitive(user)
+    return user
+  }
+
+  async signin(dto) {
+    const {
+      username,
+      password
+    } = dto
+    const user = await this.usersModel.getOneUser({
+      username: { eq: username }
+    })
+    if (!user) {
+      throw new HTTPError(['User not exists.'], 404)
+    }
+
+    if (user.status !== USER_STATUSES.ACTIVATED) {
+      const otpToken = jwt.sign(
+        { id: user.id },
+        process.env.OTP_TOKEN_SECRET,
+        { expiresIn: 30 * 60 } // 10m 
+      )
+
+      return {
+        token: {
+          otp_token: otpToken
+        }
+      }
+    }
+
+    const isMatchedPwd = bcrypt.compareSync(password, user.hash)
+    if (!isMatchedPwd) {
+      throw new HTTPError(['Authentication failed.'], 401)
+    }
+
+    this.removeSensitive(user)
+
+    const accessToken = jwt.sign(
+      { id: user.id },
+      process.env.ACCESS_TOKEN_SECRET,
+      { expiresIn: 10 * 60 } // 10m 
+    )
+
+    const refreshToken = jwt.sign(
+      { id: user.id },
+      process.env.REFRESH_TOKEN_SECRET,
+      { expiresIn: 24 * 60 * 60 } // 1d
+    )
+
+    user.token = {
+      access_token: accessToken,
+      refresh_token: refreshToken
+    }
 
     return user
   }
 
-  // core feature
-  async signin(input) {
+  async verify(dto) {
     const {
-      username,
-      password
-    } = input
+      otp,
+      id
+    } = dto
 
-    // FIXME: - Data not trim space
-    // - email
-    // - first_name
-    // - last_name
-    this.validateSignin(input)
-
-    const user = await this.usersModel.getOneByUsername({ username })
+    let user = await this.usersModel.getOneUserByID(id)
     if (!user) {
-      throw new HTTPError('user not exists')
+      throw new HTTPError(['User not exists.'], 404)
     }
 
-    // FIXME: - When signin not check status === Actived
-
-    const isMatchedPwd = bcrypt.compareSync(password, user.hash)
-    if (!isMatchedPwd) {
-      throw new HTTPError('authentication failed', 401)
+    const savedOTP = this.nodeCache.get(user.username)
+    if (savedOTP != otp) {
+      throw new HTTPError(['Unmatched OTP.'], 401)
     }
 
-    // FIXME: - JWT has no exp time
-    const token = jwt.sign(user, process.env.PRIVATE_KEY)
-    user.token = token
+    if (user.status !== USER_STATUSES.UNVERIFIED) {
+      throw new HTTPError(['User has already verified.'], 409)
+    }
+
+    user = await this.usersModel.updateOneUserByID(user.id, { status: USER_STATUSES.ACTIVATED })
+
+    this.nodeCache.del(user.username)
+
+    this.removeSensitive(user)
+
+    const accessToken = jwt.sign(
+      { id: user.id },
+      process.env.ACCESS_TOKEN_SECRET,
+      { expiresIn: 10 * 60 } // 10m 
+    )
+
+    const refreshToken = jwt.sign(
+      { id: user.id },
+      process.env.REFRESH_TOKEN_SECRET,
+      { expiresIn: 24 * 60 * 60 } // 1d
+    )
+
+    user.token = {
+      access_token: accessToken,
+      refresh_token: refreshToken
+    }
 
     return user
   }
 }
-
-module.exports = Users

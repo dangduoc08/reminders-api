@@ -1,32 +1,46 @@
-const jwt = require('jsonwebtoken')
+import jwt from 'jsonwebtoken'
 
-function authenticate(req, res, next) {
-  if (!req.cookies || !req.cookies?.token) {
-    return res
-      .status(401)
-      .json({
-        message: 'authentication failed. Please login to proceed',
-        data: null,
-      })
-  }
+function authenticate(from, secret) {
+  return (req, res, next) => {
+    let token = req
+    for (const key of from.split('.')) {
+      if (!token[key]) {
+        token = null
+        break
+      }
+      token = token[key]
+    }
 
-  const { token } = req.cookies
-
-  jwt.verify(token.replace('Bearer', '').trim(), process.env.PRIVATE_KEY, (e, user) => {
-    if (e !== null) {
+    if (!token || typeof token !== 'string') {
       return res
         .status(401)
         .json({
-          message: e.message,
+          message: 'Unauthorized',
+          errors: [
+            'Authentication failed.'
+          ],
           data: null,
         })
-
     }
 
-    req.user = user
-    next()
-  })
+    jwt.verify(token.trim(), secret, (err, user) => {
+      if (err !== null) {
+        return res
+          .status(401)
+          .json({
+            message: 'Unauthorized',
+            errors: [
+              err?.message || 'Authentication failed.'
+            ],
+            data: null,
+          })
 
+      }
+
+      req.user = user
+      next()
+    })
+  }
 }
 
-module.exports = authenticate
+export default authenticate

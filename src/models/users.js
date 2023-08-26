@@ -1,32 +1,37 @@
-const { USER_STATUSES } = require('../constants')
+import QueryBuilder from '../helpers/query_builder.js'
+import formatQuery from '../helpers/format_query.js'
+import {
+  USER_STATUSES
+} from '../constants/index.js'
 
-class Users {
-  static instance
+export default class Users {
+  static _instance
+  tableName = 'users'
 
-  constructor(pgClient) {
+  constructor(pgClient, logger) {
     this.pgClient = pgClient
+    this.logger = logger
+    this.users = new QueryBuilder(this.tableName)
   }
 
-  static getInstance(pgClient) {
-    if (!Users.instance) {
-      Users.instance = new Users(pgClient)
+  static getInstance(pgClient, logger) {
+    if (!Users._instance) {
+      Users._instance = new Users(pgClient, logger)
     }
-
-    return Users.instance
+    return Users._instance
   }
 
   async createTable() {
     try {
       await this.pgClient.query(`
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE IF NOT EXISTS ${this.tableName} (
           id SERIAL PRIMARY KEY,
           first_name VARCHAR(50) NOT NULL,
           last_name VARCHAR(50) NOT NULL,
-          dob DATE NOT NULL,
+          dob TIMESTAMP NOT NULL,
           username VARCHAR(50) NOT NULL UNIQUE,
           email VARCHAR NOT NULL UNIQUE,
           hash VARCHAR NOT NULL,
-          password VARCHAR NOT NULL,
           status user_status NOT NULL,
           created_at TIMESTAMP NOT NULL,
           updated_at TIMESTAMP NOT NULL
@@ -37,67 +42,63 @@ class Users {
     }
   }
 
-  async getOneByUsernameOrEmail(username, email) {
+  async getOneUserByID(id) {
     try {
-      let baseQuery = `SELECT * FROM users WHERE email='${email}' OR username='${username}';`
+      const query = this.users
+        .eq('id', id)
+        .limit(1)
+        .build()
 
-      console.log(baseQuery)
-      const resp = await this.pgClient.query(baseQuery)
-
+      this.logger.info(query)
+      const resp = await this.pgClient.query(query)
       return resp.rows?.[0] ?? null
     } catch (err) {
-      throw err
+      this.logger.error(err)
+      return null
     }
   }
 
-  async getOneByEmail(email) {
+  async getOneUser(filters = {}) {
     try {
-      let baseQuery = `SELECT * FROM users WHERE email='${email}';`
+      if (filters?.username !== null && filters?.username !== undefined) {
+        const { eq } = filters.username
+        if (eq !== null && eq !== undefined) {
+          this.users.eq('username', eq)
+        }
+      }
 
-      console.log(baseQuery)
-      const resp = await this.pgClient.query(baseQuery)
+      if (filters?.email !== null && filters?.email !== undefined) {
+        const { eq } = filters.email
+        if (eq !== null && eq !== undefined) {
+          this.users.eq('email', eq)
+        }
+      }
 
+      const query = this.users
+        .limit(1)
+        .build()
+
+      this.logger.info(query)
+      const resp = await this.pgClient.query(query)
       return resp.rows?.[0] ?? null
     } catch (err) {
-      throw err
+      this.logger.error(err)
+      return null
     }
   }
 
-  async getOneByUsername({ username }) {
+  async createOneUser(data = {}) {
     try {
-      let baseQuery = `
-        SELECT
-          id,
-          first_name,
-          last_name,
-          dob,
-          email,
-          hash,
-          password,
-          status,
-          created_at,
-          updated_at
-        FROM 
-          users
-        WHERE
-          username='${username}'
-        LIMIT 1;
-      `
+      const {
+        first_name,
+        last_name,
+        dob,
+        email,
+        username,
+        hash,
+      } = data
 
-      console.log(baseQuery)
-      const resp = await this.pgClient.query(baseQuery)
-
-      return resp.rows?.[0] ?? null
-    } catch (err) {
-      throw err
-    }
-  }
-
-  async createOne({ first_name, last_name, dob, email, username, hash, password }) {
-    try {
-
-      // FIXME: - Store password inside DB
-      const baseQuery = `
+      const query = formatQuery(`
         INSERT INTO users(
           first_name,
           last_name,
@@ -105,7 +106,6 @@ class Users {
           email,
           username,
           hash,
-          password,
           status,
           created_at,
           updated_at
@@ -117,22 +117,39 @@ class Users {
           '${email}',
           '${username}',
           '${hash}',
-          '${password}',
           '${USER_STATUSES.UNVERIFIED}',
           NOW(),
           NOW()
         )
         RETURNING *;
-      `
+      `)
 
-      console.log(baseQuery)
-      const resp = await this.pgClient.query(baseQuery)
-
+      this.logger.info(query)
+      const resp = await this.pgClient.query(query)
       return resp.rows?.[0] ?? null
     } catch (err) {
-      throw err
+      this.logger.error(err)
+      return null
+    }
+  }
+
+  async updateOneUserByID(id, { status }) {
+    try {
+      const query = formatQuery(`
+        UPDATE users
+        SET
+          status = '${status}',
+          updated_at = NOW()
+        WHERE id = ${id}
+        RETURNING *;
+      `)
+
+      this.logger.info(query)
+      const resp = await this.pgClient.query(query)
+      return resp.rows?.[0] ?? null
+    } catch (err) {
+      this.logger.error(err)
+      return null
     }
   }
 }
-
-module.exports = Users

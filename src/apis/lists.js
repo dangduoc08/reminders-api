@@ -1,59 +1,76 @@
-const { Router } = require('express')
+import { Router } from 'express'
 
-class Lists {
-  static instance
+export default class Lists {
+  static _instance
 
-  constructor(listsController) {
+  constructor(listsController, listsValidation, listsTransformation) {
     this.listsController = listsController
+    this.listsValidation = listsValidation
+    this.listsTransformation = listsTransformation
     this.router = Router()
   }
 
-  static getInstance(listsController) {
-    if (!Lists.instance) {
-      Lists.instance = new Lists(listsController)
+  static getInstance(listsController, listsValidation, listsTransformation) {
+    if (!Lists._instance) {
+      Lists._instance = new Lists(listsController, listsValidation, listsTransformation)
     }
-
-    return Lists.instance
+    return Lists._instance
   }
 
   serve() {
-    this.router.post('/create', async (req, res) => {
+    this.router.post('/', async (req, res) => {
       try {
+        const dto = this.listsTransformation.transformCreate({
+          user_id: req.user.id,
+          ...req.body.data
+        })
 
-        const list = await this.listsController.createOne(req.body.data, req.user.id)
+        this.listsValidation.validateCreate(dto)
+
+        const list = await this.listsController.create(dto)
 
         return res
           .status(201)
           .json({
-            message: 'success',
+            message: 'Success',
+            errors: null,
             data: list
           })
-      } catch (e) {
+      } catch ({ message, errors, code = 500 }) {
         res
-          .status(e.code || 500)
+          .status(code)
           .json({
-            message: e.message,
+            message,
+            errors,
             data: null
           })
       }
     })
 
-    this.router.get('/list', async (req, res) => {
+    this.router.get('/', async (req, res) => {
       try {
-        const { limit, offset } = req.query
-        const lists = await this.listsController.getMany(req.user.id, limit, offset)
+        const dto = this.listsTransformation.transformList({
+          user_id: req.user.id,
+          ...req.query
+        })
+
+        this.listsValidation.validateList(dto)
+
+        const lists = await this.listsController.list(dto)
 
         return res
           .status(201)
           .json({
-            message: 'success',
+            message: 'Success',
+            errors: null,
             data: lists
           })
-      } catch (e) {
-        return res
-          .status(e.code || 500)
+      } catch ({ message, errors, code = 500 }) {
+        res
+          .status(code)
           .json({
-            message: e.message,
+            message,
+            errors,
             data: null
           })
       }
@@ -62,5 +79,3 @@ class Lists {
     return this.router
   }
 }
-
-module.exports = Lists

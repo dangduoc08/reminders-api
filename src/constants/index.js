@@ -1,12 +1,24 @@
-const {
-  USER_STATUSES,
-  LIST_STATUSES,
-  TASK_STATUSES
-} = require('./statuses');
+export const USER_STATUSES = {
+  UNVERIFIED: 'Unverified',
+  ACTIVATED: 'Activated',
+  INACTIVED: 'Inactivated'
+}
 
+export const LIST_STATUSES = {
+  UNFINISHED: 'Unfinished',
+  COMPLETED: 'Completed',
+  DELETED: 'Deleted'
+}
 
-module.exports = {
-  USER_STATUSES,
-  LIST_STATUSES,
-  TASK_STATUSES,
+export const TASK_STATUSES = {
+  UNFINISHED: 'Unfinished',
+  COMPLETED: 'Completed',
+  DELETED: 'Deleted'
+}
+
+export const PRIORITIES = {
+  NONE: 'None',
+  LOW: 'Low',
+  MEDIUM: 'Medium',
+  HIGH: 'High'
 }
